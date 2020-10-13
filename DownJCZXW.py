@@ -3,7 +3,9 @@ import json
 import math
 import os
 import sys
-import ThunderDownload
+from gzip import GzipFile
+from io import StringIO,BytesIO
+# import ThunderDownload
 
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
@@ -19,7 +21,8 @@ sys.path.append(rootPath)
 down_url = "http://static.cninfo.com.cn/"
 # 接口地址
 interface_url = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
-orgId_url = "http://www.cninfo.com.cn/new/information/topSearch/query"
+orgId_url = "http://www.cninfo.com.cn/new/information/topSearch/detailOfQuery"
+# orgId_url = "http://www.cninfo.com.cn/new/information/topSearch/query"
 # 默认page_size
 default_page_size = 30  # 巨潮资讯网没有地方修改此字段，最好不要该
 # 文件默认路径
@@ -36,6 +39,10 @@ def retrieveback(file_name, save_path):
     print(file_name + "下载完成," + save_path)
 
 
+def gzip(data):
+    buf = BytesIO(data)
+    f = GzipFile(fileobj=buf)
+    return f.read()
 def get_orgId(keyWord, maxNum=10):
     requestParam = {
         'keyWord': keyWord,  # 根据需要修改
@@ -52,45 +59,63 @@ def get_orgId(keyWord, maxNum=10):
         return None
 
 
-def get_annList(stock, se_date, pageNum=1, pageSize=default_page_size):
+def get_annList(stock, se_date, search_key,pageNum=1, pageSize=default_page_size):
     # org_id = get_orgId(stock)
     if len(stock)==6:
-        requestParam = {
-            'pageNum': pageNum,  # 根据需要修改
-            'pageSize': pageSize,  # 根据需要修改
-            'seDate': se_date,  # 起止时间，格式yyyy-MM-dd
-            'stock': stock,
-            'tabName': 'fulltext',  # 应该是根据不同的tblname查询不同的模块，这里固定
-            'category': 'category_ndbg_szsh',  # 这啥玩意，不同类型？
-            'column': 'szse'  # ？
-        }
-    elif len(stock)==5:
         requestParam = {
             'pageNum': pageNum,  # 根据需要修改
             'pageSize': pageSize,  # 根据需要修改
             # 'seDate': se_date,  # 起止时间，格式yyyy-MM-dd
             'stock': stock,
             'tabName': 'fulltext',  # 应该是根据不同的tblname查询不同的模块，这里固定
-            'column': 'hke',  # ？
-            'searchkey': '年度报告'
+            'category': 'category_ndbg_szsh',  # 这啥玩意，不同类型？
+            'column': 'szse'  # ？
+        }
+    elif len(stock)==5:
+            requestParam = {
+            'pageNum': '1',
+            'pageSize': '30',
+            'column': 'hke',
+            'tabName': 'fulltext',
+            # 'plate':'',
+            'stock': '{},gshk00{}'.format(stock,stock), #不可以有空格
+            # 'stock': stock,
+            'searchkey':search_key,
+            # 'secid':'',
+            # 'category':'',
+            # 'trade':'',
+            'seDate': se_date,
+            # 'sortName':'',
+            # 'sortType':'',
+            'isHLtitle': 'true'
         }
 
     data = bytes(parse.urlencode(requestParam, encoding='utf-8'), encoding='utf-8')
     header = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/74.0.3729.169 Safari/537.36'
+        # 'Accept': '* / *',
+        'Accept-Encoding': 'gzip, deflate',
+        # 'Accept-Language': 'zh-CN, zh;q = 0.9',
+        # 'Connection': 'keep - alive',
+        # 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+        # , 'DNT': '1'
+        # , 'Host': 'www.cninfo.com.cn'
+        # , 'Origin': 'http: // www.cninfo.com.cn'
+        # ,'Referer': 'http://www.cninfo.com.cn/new/commonUrl/pageOfSearch?url=disclosure/list/search&lastPage=index'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36'
+        # , 'X - Requested - With': 'XMLHttpRequest'
     }
     req = request.Request(interface_url, data=data,
                           headers=header,
                           method='POST')
-    res = request.urlopen(req)
-    response = json.loads(res.read().decode('utf-8'))
+    content=request.urlopen(req).read()
+    content = gzip(content)
+
+    response = json.loads(content.decode('utf-8'))
     ann_list = response['announcements']
-    if len(ann_list) == 0:
-        print('未查询到任何信息')
-        return
-    # 总计数，用来翻页，没找到字段，自己算吧
+    # if len(ann_list) == 0:
+    #     print('未查询到任何信息')
+    #     return
+    # # 总计数，用来翻页，没找到字段，自己算吧
     total_count = response['totalAnnouncement']
     if total_count == 0:
         print('未查询到任何信息')
@@ -101,14 +126,14 @@ def get_annList(stock, se_date, pageNum=1, pageSize=default_page_size):
     print("pageNo = " + str(pageNum))
     # 递归翻页
     if total_page != pageNum:
-        get_annList(stock, se_date, pageNum + 1, pageSize)
+        get_annList(stock, se_date, search_key,pageNum + 1, pageSize)
     download_from_annList(ann_list)
 
 
 def download_from_annList(ann_list):
     for model in ann_list:
         downUrl = down_url + model['adjunctUrl']
-        fileName = model['secCode'] + model['secName'] + model['announcementTitle'] + '.pdf'
+        fileName = model['secCode'] + model['secName'] + model['announcementTitle'].replace('<em>','').replace('</em>','') + '.pdf'
         fileName = check_filename(fileName)
         savePath = defaule_file_path + fileName
         need_down = check_file_need_down(fileName)
@@ -120,7 +145,8 @@ def download_from_annList(ann_list):
             print(savePath + '已存在')
             continue
         if use_thunder:
-            ThunderDownload.thunder_download(downUrl, fileName)
+            pass
+            # ThunderDownload.thunder_download(downUrl, fileName)
         else:
             download_pdf(downUrl, savePath, fileName)
 
@@ -156,9 +182,11 @@ def download_pdf(download_url, save_path, file_name):
         print(e)
 
 
+
 def read_file_as_stock(filename):
     if not os.path.exists(filename):
-        raise Exception('未找到该文件')
+        print('未找到stock.txt文件！')
+        raise Exception('未找到该文件...')
     stock_arr = []
     with open(filename) as file:
         line = file.readline()
@@ -185,42 +213,50 @@ def read_file_as_stock(filename):
     return stock_arr_correct
 
 
-if __name__ == '__main__':
-    # print('选择类型：A（输入公司代码，下载不同时间内的该公司pdf），B（根据一个txt文件读取公司代码，下载不同时间内该公司pdf，txt格式参考readme）')
-    # type = input()
-    type='B'
-    # print('是否使用迅雷下载(y/n)(某些资源不好的尝试调用迅雷下载，但是大批量下载的时候可能会丢失下载任务)')
-    # use_thunder = True if input() == 'y' else False
-    use_thunder=False
-    if type.upper() == 'A':
-        print('输入公司代码')
-        # stockCode = input()
-        stockCode='00157,gshk0000157'
-        print('输入查询开始时间，时间格式xxxx-xx-xx')
-        # dataBetween = input()
-        print('输入查询截止时间，时间格式xxxx-xx-xx')
-        # dataAnd = input()
-        # seDate = [dataBetween, dataAnd]
-        seDate=['2010-01-01','2020-03-25']
-        get_annList(stockCode, seDate)
-    elif type.upper() == 'B':
-        print('输入公司代码txt文件名')
-        filename = input()
-        try:
-            stock_arr = read_file_as_stock(filename)
-            # print('输入查询开始时间，时间格式xxxx-xx-xx')
-            # dataBetween = input()
-            # dataBetween = '2009-01-01'
-            # print('输入查询截止时间，时间格式xxxx-xx-xx')
-            # dataAnd = input()
-            # dataAnd = '2013-12-31'
-            # seDate = dataBetween + "~" + dataAnd
-            seDate = ['2017-01-01', '2020-03-25']
-            print('查询公司代码：')
-            print(stock_arr)
-            for stock in stock_arr:
-                get_annList(stock, seDate)
-
-        except Exception as e:
-            print(e)
-            exit()
+# if __name__ == '__main__':
+#     # print('选择类型：A（输入公司代码，下载不同时间内的该公司pdf），B（根据一个txt文件读取公司代码，下载不同时间内该公司pdf，txt格式参考readme）')
+#     # type = input()
+#     type='B'
+#     # print('是否使用迅雷下载(y/n)(某些资源不好的尝试调用迅雷下载，但是大批量下载的时候可能会丢失下载任务)')
+#     # use_thunder = True if input() == 'y' else False
+#     use_thunder=False
+#     is_debug=1
+#     if type.upper() == 'A':
+#         print('输入公司代码')
+#         # stockCode = input()
+#         stockCode='00157,gshk0000157'
+#         print('输入查询开始时间，时间格式xxxx-xx-xx')
+#         # dataBetween = input()
+#         print('输入查询截止时间，时间格式xxxx-xx-xx')
+#         # dataAnd = input()
+#         # seDate = [dataBetween, dataAnd]
+#         seDate=['2010-01-01','2020-03-25']
+#         get_annList(stockCode, seDate)
+#     elif type.upper() == 'B':
+#         print('将从本文件夹stock.txt中读入公司股票代号...')
+#         if(is_debug):
+#             filename='stock.txt'
+#         else:
+#            filename = input()
+#         try:
+#             stock_arr = read_file_as_stock(filename)
+#             # print('输入查询开始时间，时间格式xxxx-xx-xx')
+#             # dataBetween = input()
+#             # dataBetween = '2009-01-01'
+#             # print('输入查询截止时间，时间格式xxxx-xx-xx')
+#             # dataAnd = input()
+#             # dataAnd = '2013-12-31'
+#             # seDate = dataBetween + "~" + dataAnd
+#             seDate = '2017-01-01~2020-10-09'
+#             print('查询公司代码：')
+#             print(stock_arr)
+#             for stock in stock_arr:
+#                 get_annList(stock, seDate)
+#
+#         except Exception as e:
+#             print(e)
+#             temp=input()
+#             exit()
+#
+#     temp = input()
+#     exit()
